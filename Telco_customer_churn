@@ -1,0 +1,394 @@
+Telco Business Requirement Document 
+
+ 1 Business Challenges
+The data highlights three critical challenges that are currently costing the business revenue:
+Contractual Volatility: A massive portion of the customer base is on Month-to-month contracts. This creates a "leaky bucket" where revenue is unpredictable and customer loyalty is non-existent.
+Fiber Optic Reputation: Fiber Optic is usually a premium product, yet its churn rate is high (~42%). If your premium product has the lowest retention, the business is effectively losing its highest-paying customers.
+The Digital Gap: The high churn among Senior Citizens suggests that the current billing (Paperless) or payment methods (Electronic Check) might be creating friction for this demographic.
+2. Key Outcomes (Descriptive Insights)
+Based on the data, we have identified several "Red Flag" patterns that define why customers are leaving:
+The "Price Gap": Customers who churn pay an average of $74.44/month, while retained customers pay $61.27/month. This $13 difference suggests that high-tier pricing is driving customers toward competitors.
+The "Crucial 18-Month" Mark: The average tenure of a customer who leaves is only 18 months, compared to 38 months for those who stay. The first year and a half of the customer journey is your highest-risk period.
+Support & Security as Retention Anchors: Customers who do not have Online Security or Tech Support churn at a staggering rate of ~41%. When these services are added, churn drops to ~15%.
+Segment Risks: * Senior Citizens churn at nearly double the rate of younger demographics (41.7% vs 23.6%).
+Fiber Optic users have a much higher churn rate than DSL users, indicating potential service reliability issues or price dissatisfaction.
+3. Predictions (Predictive Analytics)
+By moving this data into a system like Microsoft Fabric, we can build models to forecast:
+Churn Probability Score: Every current customer can be assigned a "Risk Score" (0 to 100%). We can predict who is likely to leave before they call to cancel.
+Customer Lifetime Value (CLV): We can predict the total revenue a customer will generate over their entire relationship, allowing the business to decide how much they should spend to "save" a specific customer.
+Next Best Offer: Based on the data that shows Tech Support reduces churn, the model can predict which customers should be offered a free trial of "Support Services" to lock them in.
+4. Strategic Recommendations
+To move the needle on retention, I recommend the following three-pillar strategy:
+Pillar A: The "Retention Bundle" Strategy
+Action: Bundle "Online Security" and "Tech Support" into the standard Internet packages.
+Reasoning: The data shows that these services are the strongest "glue" keeping customers loyal. Even offering them for free for 6 months can double the retention rate for new customers.
+Pillar B: Migration Incentives
+Action: Launch a campaign to migrate "Month-to-month" customers to "1-Year Contracts" by offering a small discount (e.g., $5 off) that brings their monthly charge closer to the $61 "loyalty average."
+Reasoning: Customers on 2-year contracts almost never churn (~3% rate).
+Pillar C: Targeted Senior Citizen Support
+Action: Introduce a specialized support line or non-digital billing options for the 65+ demographic.
+Reasoning: Addressing the 41% churn rate in this specific segment could save millions in annual recurring revenue (ARR)
+
+
+Step to Implement the case study : 
+Step 1: Workspace & Lakehouse Setup (The Bronze Layer)
+In this step, we are creating the "Landing Zone" for your raw data. This is known as the Bronze Layer, where data is kept in its original format.
+Actions to perform in Microsoft Fabric:
+Create a Workspace:
+Go to your Fabric homepage and click on Workspaces in the left-hand menu.
+Click + New workspace.
+Name it Telco_Churn_Analytics.
+Create a Lakehouse:
+Inside your new workspace, click + New (or the "Create" button) and select Lakehouse.
+Name it Telco_Lakehouse.
+Upload the Data:
+Once the Lakehouse is created, look at the Explorer pane on the left.
+Right-click on the Files folder (not Tables) and select Upload > Upload files.
+Select the Telco-Customer-Churn.csv file from your computer.
+Step 2: Data Engineering & Cleaning (The Silver Layer)
+Actions to perform in Microsoft Fabric:
+Create a Notebook:
+At the top of your Lakehouse view, click Open Notebook > New notebook.
+Rename the notebook to 01_Clean_Telco_Data.
+Load and Transform the Data:
+Copy and paste the code block below into the first cell of your notebook. This code handles the critical "TotalCharges" issue we identified earlier and standardizes the schema.
+Python
+from pyspark.sql.functions import col, when, cast
+
+# 1. Read the CSV file from the 'Files' section
+df = spark.read.format("csv").option("header","true").load("Files/Telco-Customer-Churn.csv")
+
+# 2. Clean 'TotalCharges': Replace empty strings with '0' and cast to Double
+# This fixes the '11 missing records' issue found in our analysis
+df = df.withColumn("TotalCharges", 
+                   when(col("TotalCharges") == " ", "0")
+                   .otherwise(col("TotalCharges"))
+                   .cast("double"))
+
+# 3. Cast other numeric columns correctly
+df = df.withColumn("tenure", col("tenure").cast("int")) \
+       .withColumn("MonthlyCharges", col("MonthlyCharges").cast("double")) \
+       .withColumn("SeniorCitizen", col("SeniorCitizen").cast("int"))
+
+# 4. Save as a Delta Table in the 'Tables' section (Silver Layer)
+df.write.format("delta").mode("overwrite").saveAsTable("Cleaned_Telco_Churn")
+
+print("Silver Layer Table 'Cleaned_Telco_Churn' has been created successfully!")
+
+Run the Cell:
+Click the Run icon (play button) next to the cell.
+Verify:
+Once the spark job finishes, go back to your Lakehouse view and Refresh the Tables folder.
+You should now see a table named Cleaned_Telco_Churn.
+Step 3: Feature Engineering & Aggregation (The Gold Layer)
+Actions to perform in Microsoft Fabric:
+Create a New Notebook (or add a new cell to your current one):
+It is best practice to keep a separate notebook for the "Gold" layer to keep your pipeline organized. Name it 02_Gold_Features_Telco.
+Add the Logic for Business Strategy:
+Paste the following code into a cell. This code creates a "Total Services" count (the "glue" we discussed) and converts categorical columns into numbers for the ML model.
+      3.  Run the Cell.
+      4. Verify:
+Refresh your Lakehouse Tables folder. You should now see the Gold_Telco_Customer_Insights table.
+from pyspark.sql.functions import col, when, expr
+
+# 1. Load the Silver Table
+df_silver = spark.table("Cleaned_Telco_Churn")
+
+# 2. Strategy: Create a 'ServiceCount' feature 
+# This tells us how 'sticky' a customer is based on how many add-ons they have.
+service_cols = ['OnlineSecurity', 'OnlineBackup', 'DeviceProtection', 'TechSupport', 'StreamingTV', 'StreamingMovies']
+
+df_gold = df_silver.withColumn("ServiceCount", 
+    sum([when(col(c) == "Yes", 1).otherwise(0) for c in service_cols]))
+
+# 3. Strategy: Create a 'HighRisk_HighCharges' flag
+# Flags customers paying more than average ($65+) on a month-to-month basis.
+df_gold = df_gold.withColumn("HighRiskSegment", 
+    when((col("MonthlyCharges") > 65) & (col("Contract") == "Month-to-month"), 1)
+    .otherwise(0))
+
+# 4. Transform Target Variable 'Churn' to numeric (1/0) for the Prediction Model
+df_gold = df_gold.withColumn("Churn_Label", when(col("Churn") == "Yes", 1).otherwise(0))
+
+# 5. Save as the Gold Table
+df_gold.write.format("delta").mode("overwrite").saveAsTable("Gold_Telco_Customer_Insights")
+
+print("Gold Layer Table 'Gold_Telco_Customer_Insights' is ready for Reporting and ML!")
+
+Step 3.5 (Optional but Recommended): Tenure Grouping
+Before we move to the AI step, let's add this to your Gold Notebook (or a new cell). This groups customers into "buckets" (e.g., New, Loyal, Veteran), which is a standard requirement for Telco business reporting.
+Action: Run this in a new cell in your Notebook:
+from pyspark.sql.functions import when, col
+
+
+# 1. Load the Gold table
+df_gold = spark.table("Gold_Telco_Customer_Insights")
+
+
+# 2. Create Tenure Buckets
+df_gold = df_gold.withColumn("Tenure_Group",
+    when(col("tenure") <= 12, "0-12 Months")
+    .when((col("tenure") > 12) & (col("tenure") <= 24), "12-24 Months")
+    .when((col("tenure") > 24) & (col("tenure") <= 48), "24-48 Months")
+    .when((col("tenure") > 48) & (col("tenure") <= 60), "48-60 Months")
+    .otherwise("> 60 Months"))
+
+
+# 3. Overwrite the table AND the schema
+df_gold.write.format("delta") \
+    .mode("overwrite") \
+    .option("overwriteSchema", "true") \
+    .saveAsTable("Gold_Telco_Customer_Insights")
+
+
+print("Fixed! Tenure Groups added and schema updated.")
+
+Strategy :
+1. Categorical Simplification (Reducing Noise)
+In your dataset, columns like OnlineSecurity have three values: "Yes", "No", and "No internet service".
+The Problem: To a computer, "No" and "No internet service" are different.
+The Fix: We should consolidate "No internet service" into "No". This reduces noise and simplifies the patterns the AI has to learn.
+2. Binary Encoding (1s and 0s)
+The Problem: Power BI and ML models prefer numbers. If we want to calculate the "Percentage of users with Tech Support," it's hard to do with text.
+The Fix: Convert all "Yes/No" columns into 1 and 0. This allows you to simply "Sum" a column in Power BI to get the total count of users.
+3. Dropping Unique Identifiers
+The Problem: customerID is a random string. If you include it in a machine learning model, the model might try to find patterns in the ID (which is impossible), leading to "Overfitting."
+The Fix: We keep the ID in the "Analytics" table but remove it for the "ML-Ready" table.
+Step 3.6: Final Refinement (The "AI-Ready" Table)
+Run this code in a new cell. It will perform these cleanups across all 13 service-related columns at once.
+from pyspark.sql.functions import col, when
+
+
+# 1. Load the latest table
+df = spark.table("Gold_Telco_Customer_Insights")
+
+
+# 2. List of columns to convert to 1/0
+binary_cols = [
+    'Partner', 'Dependents', 'PhoneService', 'MultipleLines', 'OnlineSecurity',
+    'OnlineBackup', 'DeviceProtection', 'TechSupport', 'StreamingTV',
+    'StreamingMovies', 'PaperlessBilling', 'Churn'
+]
+
+
+# 3. Apply transformation
+for c in binary_cols:
+    df = df.withColumn(c, when(col(c) == "Yes", 1).otherwise(0))
+
+
+# 4. Standardize Gender
+df = df.withColumn("gender", when(col("gender") == "Male", 1).otherwise(0))
+
+
+# 5. Create ML-specific version (Remove unique IDs)
+df_ml = df.drop("customerID")
+
+
+# 6. Save both versions with overwriteSchema enabled
+df.write.format("delta").mode("overwrite").option("overwriteSchema", "true").saveAsTable("Gold_Final_Reporting")
+df_ml.write.format("delta").mode("overwrite").option("overwriteSchema", "true").saveAsTable("Gold_ML_Ready")
+
+
+print("Final Transformations Complete! You now have two optimized tables.")
+
+
+Step 4: Machine Learning Training (The "Brain")
+Actions to perform in Microsoft Fabric:
+Switch Experience:
+In the bottom-left corner of your Fabric screen, switch from Data Engineering to Data Science.
+Create an Experiment:
+Click + New and select Experiment. Name it Telco_Churn_Prediction.
+This will track all your model versions and accuracy scores automatically.
+Create a New Notebook:
+Create a notebook named 03_Train_Churn_Model.
+Train the Model:
+Paste the code below into a cell. This uses the LightGBM algorithm, which is excellent for tabular data like yours. It will split the data into "Training" (to learn) and "Testing" (to verify accuracy).
+Step 5: Batch Scoring (Direct Load Approach)
+Replace the code in your notebook with this version. 
+This code looks for your latest successful experiment run and pulls the model directly from there.
+import mlflow
+import pandas as pd
+import numpy as np
+from pyspark.sql.functions import col
+
+
+# 1. Find the latest run ID
+experiment_name = "Telco_Churn_Prediction"
+experiment = mlflow.get_experiment_by_name(experiment_name)
+runs = mlflow.search_runs(experiment_ids=[experiment.experiment_id], order_by=["start_time DESC"], max_results=1)
+last_run_id = runs.iloc[0].run_id
+
+
+# 2. Load the Reporting table
+df_reporting = spark.table("Gold_Final_Reporting").toPandas()
+
+
+# 3. Prepare data (X)
+# FIX: We NO LONGER drop 'Tenure_Group' here because the model needs it!
+X = df_reporting.drop(['customerID', 'Churn', 'Churn_Label'], axis=1)
+X = pd.get_dummies(X)
+
+
+# 4. Load the model
+model_uri = f"runs:/{last_run_id}/churn_model"
+loaded_model = mlflow.sklearn.load_model(model_uri)
+
+
+# 5. SAFETY ALIGNMENT: Ensure X has exactly the same columns as the trained model
+# This handles cases where some categories might be missing in the data
+model_features = loaded_model.feature_name_
+for col_name in model_features:
+    if col_name not in X.columns:
+        X[col_name] = 0  # Add missing columns as 0
+X = X[model_features]   # Reorder columns to match the model's training order
+
+
+# 6. Generate Probabilities
+probabilities = loaded_model.predict_proba(X)[:, 1]
+
+
+# 7. Add scores and Risk Levels back to the original dataframe
+df_reporting['Churn_Probability'] = probabilities
+df_reporting['Risk_Level'] = pd.cut(df_reporting['Churn_Probability'],
+                                    bins=[0, 0.3, 0.7, 1],
+                                    labels=['Low Risk', 'Medium Risk', 'High Risk'])
+
+
+# 8. Save back to Lakehouse as a final table
+spark_df_final = spark.createDataFrame(df_reporting)
+spark_df_final.write.format("delta").mode("overwrite").option("overwriteSchema", "true").saveAsTable("Final_Customer_Risk_Scores")
+
+
+print("Success! Feature mismatch resolved. 'Final_Customer_Risk_Scores' table is ready.")
+Step 6: Executive Python Report
+Paste this code into a new cell in your notebook. It will generate a "Digital Dashboard" using your Final_Customer_Risk_Scores table.
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+
+# 1. Load the data from your Gold table
+df = spark.table("Final_Customer_Risk_Scores").toPandas()
+
+# 2. Visual 1: The "Risk Distribution" (High/Medium/Low Count)
+fig1 = px.histogram(df, x="Risk_Level", color="Risk_Level", 
+                   title="Customer Count by Churn Risk Level",
+                   color_discrete_map={'High Risk': 'red', 'Medium Risk': 'orange', 'Low Risk': 'green'})
+fig1.show()
+
+# 3. Visual 2: Contract Type vs. Churn Probability
+# This shows exactly which contracts are the "Danger Zones"
+fig2 = px.box(df, x="Contract", y="Churn_Probability", color="Contract",
+             title="Churn Probability Spread by Contract Type",
+             points="all")
+fig2.show()
+
+# 4. Visual 3: Top 10 Highest Risk Customers (Action List)
+# This is the list your sales team needs to call TODAY
+high_risk_list = df.sort_values(by="Churn_Probability", ascending=False).head(10)
+print("TOP 10 AT-RISK CUSTOMERS FOR IMMEDIATE RETENTION:")
+display(high_risk_list[['customerID', 'Contract', 'MonthlyCharges', 'Churn_Probability', 'Risk_Level']])
+
+# 5. Visual 4: Service Count vs. Risk
+# Proves that "The more services they have, the less they churn"
+fig3 = px.scatter(df, x="ServiceCount", y="Churn_Probability", 
+                 color="Risk_Level", trendline="ols",
+                 title="Relationship: Number of Services vs. Churn Risk")
+fig3.show()
+Pillar A: The "Retention Bundle" Finder
+We need to find customers who have Internet but are missing the "glue" services (Online Security/Tech Support) and are currently at High Risk.
+Pillar B: The "Migration" Campaign
+We need to find "Month-to-month" customers who are paying more than the "Loyalty Average" of $61. These are the people most likely to switch if offered a $5 discount to move to a 1-year contract.
+Pillar C: Senior Support Outreach
+We need to isolate the Senior Citizen segment that is currently flagged as High Risk to prioritize them for specialized support.
+The reason this telecom company is likely facing these issues is that they have fallen into the "Utility Trap"—where customers see them as a "bill to pay" rather than a "service that adds value."
+
+1. Why are they facing these issues? (The Root Cause)
+The data we analyzed suggests a Reactive Culture rather than a Proactive Culture.
+The "Silo" Effect: Marketing is likely focused on "New Customer" acquisition (cheap intro rates), while Customer Support is focused on "Ticket Closing." Neither is focused on Lifetime Value (LTV).
+Feature Complexity: The fact that "Online Security" and "Tech Support" increase loyalty suggests that customers struggle with the technical side of the product. When they can't set it up easily, they quit.
+The "Price-Only" Competition: By competing on monthly charges alone, they've attracted "Switchers"—customers who move as soon as a competitor offers a $5 discount.
+
+2. Analytical Business Approach: The "Growth Flywheel"
+Instead of just preventing churn, the business needs to transition to a Data-Driven Growth Model.
+A. Propensity-to-Buy (Cross-Sell) Modeling
+The Strategy: We already predicted who will leave. Now, use Python to predict who is most likely to upgrade.
+Action: Look for "Low Risk" customers with high usage but low-tier plans. Offer them a "Speed Boost" for 3 months.
+Scaling Impact: Increasing the Average Revenue Per User (ARPU) is often cheaper than finding a new customer.
+B. The "Referral Loop" Strategy
+The Strategy: Turn your "Low Risk / Long Tenure" customers into your sales force.
+Action: Use your Python list to find "Promoters" (Tenure > 2 years, 0 Support tickets). Send them a referral code: "Refer a neighbor, and both get $20 off."
+Scaling Impact: Referral leads typically have a 37% higher retention rate than traditional leads.
+C. Reducing "Time-to-Value" (TTV)
+The Strategy: Speed up the moment the customer feels "This is great!"
+Action: If a customer signs up for Fiber, the employee (Installer) shouldn't just plug in the wires. They should be incentivized to set up the customer's Streaming App or Home Security on their phone before leaving.
+Scaling Impact: First-month churn is the most expensive. High TTV kills that risk.
+
+3. What can the Employees do?
+Scaling isn't just for the C-Suite; it happens on the front lines.
+Customer Support (The "Insight" Agents): Instead of just solving a bill issue, every agent should see the Churn Probability Score (from our ML model) on their screen.
+If Score > 70%: The agent is authorized to offer a "Loyalty Credit" immediately without asking a manager.
+The Data Team (Your Role): You move from "Report Generator" to "Strategy Designer."
+Example: Automate an alert that pings the sales team when a "High Value" customer's usage drops by 30% (a leading indicator of churn).
+Product Teams: Use the data to simplify. If customers who don't use "Streaming" are leaving, the product team should bundle a free Netflix or Disney+ sub to make the service "un-cancelable."
+
+4. The Scaling Framework (The 80/20 Rule)
+To scale the business 10x, apply the 80/20 Principle to your model:
+Find the 20% of customers who provide 80% of your profit.
+Study their "DNA": Do they all have Fiber? Do they all have 2-year contracts?
+Clone them: Shift your entire marketing budget to only target people who look like that 20%.
+Analytical Summary: Stop trying to save everyone. Use the ML model to identify the "Saveable High-Value" customers and ignore the "Chronic Switchers" who cost more to keep than they are worth.
+Instead of looking for who is leaving, we are looking for your "Golden Cohort"—the customers who spend the most, stay the longest, and have the lowest risk.
+By identifying the "DNA" of these customers, the marketing team can stop guessing and start targeting people who actually provide long-term profit.
+The "Golden Cohort" & Strategy Finder
+Run this in a new cell to identify your "Ideal Customer Profile" (ICP):
+import pandas as pd
+import plotly.express as px
+
+# 1. Load the data
+df = spark.table("Final_Customer_Risk_Scores").toPandas()
+
+# 2. Define the "Golden Cohort"
+# Criteria: Low Risk, High Monthly Charges (Top 25%), and Long Tenure (Top 25%)
+revenue_threshold = df['MonthlyCharges'].quantile(0.75)
+tenure_threshold = df['tenure'].quantile(0.75)
+
+golden_cohort = df[
+    (df['Risk_Level'] == 'Low Risk') & 
+    (df['MonthlyCharges'] >= revenue_threshold) & 
+    (df['tenure'] >= tenure_threshold)
+]
+
+# 3. Analyze the "DNA" of these customers
+print(f"--- THE GOLDEN COHORT ANALYSIS ---")
+print(f"Total Golden Customers: {len(golden_cohort)}")
+print(f"Average Monthly Revenue from this group: ${golden_cohort['MonthlyCharges'].mean():.2f}")
+
+# 4. Visualizing the "Sticky Services"
+# We want to see what services these profitable/loyal people use most
+services = ['OnlineSecurity', 'OnlineBackup', 'DeviceProtection', 'TechSupport', 'StreamingTV', 'StreamingMovies']
+service_counts = golden_cohort[services].sum().sort_values(ascending=False)
+
+fig = px.bar(service_counts, title="The 'DNA' of Loyal Customers: Most Used Services",
+             labels={'value': 'Number of Customers', 'index': 'Service'},
+             color=service_counts.values, color_continuous_scale='Greens')
+fig.show()
+
+# 5. Business Strategy Output: The "Clone" List
+print("\nSTRATEGIC TARGETING DATA:")
+print(f"Most Common Contract: {golden_cohort['Contract'].mode()[0]}")
+print(f"Most Common Internet: {golden_cohort['InternetService'].mode()[0]}")
+
+Strategic Analysis of this Data
+1. The "DNA" Discovery
+When you run this, you will likely see that the Golden Cohort almost always has Fiber Optic and at least 3+ add-on services (like Streaming and Device Protection).
+The Strategy: The sales team should stop selling "Internet." They should only sell "The Home Entertainment & Security Bundle."
+2. Why the Business is Facing Issues (The "Silent Killer")
+If your Golden Cohort is small compared to your "High Risk" pool, it means the business is buying growth. They are spending marketing dollars to get customers who stay 3 months and leave.
+The Employee Action: Employees should be bonused on "Customer Health" (how many services a customer has) rather than just "New Sign-ups." A sign-up with 0 add-ons is a "ghost" customer who will likely churn.
+3. Scaling via "Lookalike" Marketing
+Take the Contract Type and Internet Service results from the snippet above.
+The Marketing Action: Go to Facebook/Google Ads and upload the traits of this Golden Cohort. Tell the platforms: "Find me 10,000 more people who look exactly like these people." This is how you scale 10x efficiently.
+https://gemini.google.com/share/16380cf09a8a
+
+
+
